@@ -259,8 +259,9 @@
 
     <div class="form-group">
       <label for="service">選擇服務</label>
+      <!-- 選項由 loadServices() 依「服務項目」工作表動態載入 -->
       <select id="service">
-        <option value="三段深層淨膚課程">三段深層淨膚課程｜$2,500</option>
+        <option value="">讀取服務項目中...</option>
       </select>
     </div>
 
@@ -372,6 +373,9 @@
   // 訂金金額（預設 500，checkMember 會以後端回傳為準）
   let depositAmount = 500;
 
+  // 服務項目（由 loadServices 從後端「服務項目」工作表載入）
+  let servicesMap = {};
+
   // 目前選的服務名稱（月曆與時段查詢都要帶給後端）
   function getSelectedService() {
 
@@ -381,13 +385,16 @@
 
   /* ==================================================
      初始化
+     先載入服務項目，再畫月曆（月曆要帶服務名稱去查可預約日期）
   ================================================== */
 
-  window.addEventListener('load', function () {
+  window.addEventListener('load', async function () {
 
-    renderCalendar();
     initLIFF();
     checkServiceStatus();
+
+    await loadServices();
+    renderCalendar();
 
   });
 
@@ -803,6 +810,73 @@
   }
 
   /* ==================================================
+     服務項目：從後端「服務項目」工作表載入
+  ================================================== */
+
+  // 價格 0 代表現場評估報價
+  function formatPriceLabel(price) {
+
+    return Number(price) > 0
+      ? '$' + Number(price).toLocaleString('en-US')
+      : '現場評估報價';
+
+  }
+
+  async function loadServices() {
+
+    const select = document.getElementById('service');
+
+    try {
+
+      const result = await callGAS('getServices', {});
+
+      if (!result || !result.success) {
+
+        throw new Error('讀取服務項目失敗');
+
+      }
+
+      servicesMap = result.services || {};
+
+      const names = Object.keys(servicesMap);
+
+      if (names.length === 0) {
+
+        select.innerHTML = '<option value="">目前沒有可預約的服務</option>';
+        return;
+
+      }
+
+      select.innerHTML = '';
+
+      names.forEach(function (name) {
+
+        const option = document.createElement('option');
+
+        option.value = name;
+        option.textContent = name + '｜' + formatPriceLabel(servicesMap[name].price);
+
+        select.appendChild(option);
+
+      });
+
+      if (result.defaultName) {
+
+        select.value = result.defaultName;
+
+      }
+
+    } catch (error) {
+
+      console.error('loadServices ERROR:', error);
+
+      select.innerHTML = '<option value="">服務項目讀取失敗，請重新整理</option>';
+
+    }
+
+  }
+
+  /* ==================================================
      取得可預約時間
   ================================================== */
 
@@ -1077,6 +1151,13 @@
     if (!liffReady || !lineUserId) {
 
       alert('LINE 尚未連線，請從 LINE 官方帳號開啟預約。');
+      return;
+
+    }
+
+    if (!service) {
+
+      alert('請選擇服務項目');
       return;
 
     }
@@ -1369,7 +1450,7 @@
           successRow('日期', result.date || '') +
           successRow('時間', formatTime(result.time)) +
           successRow('服務', result.service || '') +
-          successRow('價格', '$' + (result.price || '')) +
+          successRow('價格', Number(result.price) > 0 ? '$' + result.price : '現場評估報價') +
           depositRow +
         '</div>' +
 
