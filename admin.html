@@ -507,6 +507,29 @@ button:disabled {
   padding: 10px 7px;
 }
 
+/* 會員：預留訂金 */
+.pp-row {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.pp-row input {
+  width: 130px;
+  flex: 0 0 auto;
+  padding: 9px 12px;
+}
+
+.pp-tag {
+  display: inline-block;
+  font-size: 12px;
+  padding: 1px 9px;
+  border-radius: 99px;
+  background: var(--pill);
+  color: var(--ink);
+  white-space: nowrap;
+}
+
 /* 底部儲存列 */
 .bar {
   position: fixed;
@@ -773,6 +796,9 @@ const dayOf = (ms,d) => ms.slice(0,8)+String(d).padStart(2,"0");
 const fixPhone = p => /^9\d{8}$/.test(p) ? "0"+p : p;
 const mLabel = ms => `${ms.slice(0,4)} 年 ${+ms.slice(5,7)} 月`;
 
+// 會員的預留訂金（儲存格可能是空白、「500」、「NT$500」，一律轉成數字）
+const prepaidOf = m => Number(String(m["預留訂金"] ?? "").replace(/[^0-9.\-]/g,"")) || 0;
+
 // 登入狀態：只存後端發的 session，不再存密碼
 let session = "";
 try {
@@ -787,7 +813,7 @@ const TITLES = {
   bookings:["預約系統","所有預約都在這裡，可切換日、週、月檢視。"],
   hours:["營業時間","點選日期，挑好時段，一次套用到多天。"],
   services:["服務項目","調整價格與時長；不再提供的服務可以停用或刪除。"],
-  members:["會員資料","客戶的聯絡方式，以及你自己的備註。"]
+  members:["會員資料","客戶的聯絡方式、預留訂金，以及你自己的備註。"]
 };
 
 function toast(m) {
@@ -1286,13 +1312,14 @@ $("sAdd").onclick=()=>{
   window.scrollTo(0,document.body.scrollHeight);
 };
 
-/* 會員備註 */
+/* 會員資料：預留訂金與備註 */
 function renderMembers() {
   const q=$("mq").value.trim().toLowerCase();
   const list=S.members.filter(m=>!q||(m["姓名"]+m["電話"]).toLowerCase().includes(q));
 
   $("mlist").innerHTML=list.length?list.map(m=>{
     const n=S.bookings.filter(b=>b["電話"]===m["電話"]&&b["狀態"]!=="已取消").length;
+    const pp=prepaidOf(m);
 
     return `<div class="card">
       <div class="row sp">
@@ -1303,6 +1330,10 @@ function renderMembers() {
         <a href="tel:${esc(fixPhone(m["電話"]))}">${esc(fixPhone(m["電話"]))}</a>
        　首次 ${esc(m["首次預約日期"])}
       </div>
+      <div class="row pp-row">
+        <label class="mute" for="pp-${m._row}">預留訂金（NT$）</label>
+        <input id="pp-${m._row}" type="number" inputmode="numeric" min="0" step="1" data-pp="${m._row}" value="${pp}">
+      </div>
       <textarea rows="2" data-r="${m._row}" placeholder="寫下備註，例如偏好、提醒事項…">${esc(m["備註"])}</textarea>
     </div>`;
   }).join(""):'<p class="mute">沒有符合的會員。</p>';
@@ -1310,18 +1341,47 @@ function renderMembers() {
 
 $("mq").oninput=renderMembers;
 
+// 備註或預留訂金任一欄位改動，就把同一張卡片的兩個欄位一起存檔
 $("mlist").onchange=async e=>{
-  const t=e.target.closest("textarea[data-r]");
-  if (!t) return;
+  const el=e.target.closest("textarea[data-r], input[data-pp]");
+  if (!el) return;
 
-  const m=S.members.find(x=>String(x._row)===t.dataset.r);
-  const note=t.value;
+  const row=el.dataset.r||el.dataset.pp;
+  const m=S.members.find(x=>String(x._row)===row);
+  if (!m) return;
+
+  const card=el.closest(".card");
+  const ta=card.querySelector("textarea[data-r]");
+  const ppEl=card.querySelector("input[data-pp]");
+
+  const note=ta.value;
+  const raw=ppEl.value.trim();
+  const prepaid=raw===""?0:Number(raw);
+
+  if (isNaN(prepaid)||prepaid<0) {
+    ppEl.value=prepaidOf(m);
+    return toast("預留訂金要填 0 以上的數字");
+  }
+
+  const old=prepaidOf(m);
 
   try {
-    await api("saveMember",{row:m._row,name:m["姓名"],phone:m["電話"],note});
+    await api("saveMember",{
+      row:m._row,
+      name:m["姓名"],
+      phone:m["電話"],
+      note,
+      prepaid,
+      oldPrepaid:old
+    });
+
     m["備註"]=note;
-    toast("備註已儲存");
+    m["預留訂金"]=String(prepaid);
+    ppEl.value=prepaid;
+
+    toast(el===ppEl?"預留訂金已儲存":"備註已儲存");
   } catch(err) {
+    ppEl.value=old;
     toast(err.message);
   }
 };
