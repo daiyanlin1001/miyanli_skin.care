@@ -491,6 +491,27 @@
     box-shadow: none;
   }
 
+  .submit-secondary {
+    display: block;
+    width: 100%;
+    min-height: 48px;
+    margin-top: 12px;
+    padding: 12px 18px;
+    border: 1px solid var(--tea-border);
+    border-radius: 11px;
+    background: var(--tea-white);
+    color: var(--tea-primary);
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .submit-secondary:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
   /* =========================
      DEPOSIT PANEL
   ========================= */
@@ -515,6 +536,11 @@
     font-size: 13px;
     line-height: 1.9;
     margin-bottom: 14px;
+  }
+
+  .deposit-rules strong {
+    color: var(--tea-primary);
+    font-weight: 800;
   }
 
   .deposit-account {
@@ -815,7 +841,7 @@
     </div>
 
     <div class="section-description">
-      請選擇服務、日期與方便的時間，我們會為您保留預約。首次預約需支付訂金 $500。
+      請選擇服務、日期與方便的時間，我們會為您保留預約。每次預約需支付訂金 $500，若您有預留訂金可直接扣抵。
     </div>
 
     <div class="form-group">
@@ -916,8 +942,48 @@
     </button>
 
     <!--
-      新客訂金說明區塊，預設隱藏。
-      只有在「確認預約」時查不到會員資料，才會顯示出來。
+      預留訂金面板，預設隱藏。
+      「確認預約」後，若後端確認此會員有足夠的預留訂金（且 LINE 身分相符）才會顯示。
+    -->
+
+    <div
+      id="prepaidPanel"
+      class="deposit-panel"
+      style="display:none;"
+    >
+
+      <div class="deposit-title">
+        使用預留訂金
+      </div>
+
+      <div class="deposit-rules">
+        ・您目前的預留訂金：<strong id="prepaidBalance"></strong><br>
+        ・本次預約訂金：<strong id="prepaidNeed"></strong><br>
+        ・扣抵後剩餘：<strong id="prepaidAfter"></strong><br>
+        ・使用預留訂金後，此預約將直接成立。
+      </div>
+
+      <button
+        id="prepaidConfirmButton"
+        class="submit"
+        type="button"
+      >
+        使用預留訂金並完成預約
+      </button>
+
+      <button
+        id="prepaidDeclineButton"
+        class="submit-secondary"
+        type="button"
+      >
+        改用匯款支付訂金
+      </button>
+
+    </div>
+
+    <!--
+      匯款訂金說明區塊，預設隱藏。
+      沒有預留訂金（或不足、或選擇改用匯款）時顯示。
     -->
 
     <div
@@ -927,11 +993,11 @@
     >
 
       <div class="deposit-title">
-        新客戶訂金說明
+        預約訂金說明
       </div>
 
       <div class="deposit-rules">
-        ・首次預約需先支付訂金 $500，並於課程當天折抵課程費用。<br>
+        ・每次預約需先支付訂金 <strong class="deposit-amount-text">NT$500</strong>，並於課程當天折抵課程費用。<br>
         ・請匯款至下方帳號，並填寫匯款帳號後五碼，我們確認匯款後即完成正式預約。<br>
         ・匯款確認前，此預約狀態將顯示為「待確認」。
       </div>
@@ -1015,10 +1081,13 @@
 
   let liffReady = false;
 
-  // 暫存尚未送出的預約資料，等使用者填完訂金後五碼再一起送出
+  // 暫存尚未送出的預約資料，等使用者確認訂金方式後再一起送出
   let pendingReservationData = null;
 
   let serviceDisabled = false;
+
+  // 訂金金額（預設 500，checkMember 會以後端回傳為準）
+  let depositAmount = 500;
 
   /* ==================================================
      初始化
@@ -1066,6 +1135,23 @@
   document
     .getElementById('depositConfirmButton')
     .addEventListener('click', confirmDepositAndSubmit);
+
+  document
+    .getElementById('prepaidConfirmButton')
+    .addEventListener('click', confirmUsePrepaid);
+
+  document
+    .getElementById('prepaidDeclineButton')
+    .addEventListener('click', declinePrepaid);
+
+  // 客人改了預約條件，先前暫存的資料就作廢，避免用舊資料送出
+  ['phone', 'name', 'service'].forEach(function (id) {
+
+    document
+      .getElementById(id)
+      .addEventListener('input', hidePaymentPanels);
+
+  });
 
   /* ==================================================
      月曆
@@ -1305,6 +1391,9 @@
         btn.addEventListener('click', function () {
 
           selectedDate = btn.dataset.date;
+
+          // 換日期 → 先前暫存的預約資料作廢
+          hidePaymentPanels();
 
           renderCalendarGrid();
           updateSelectedDateLabel();
@@ -1556,6 +1645,9 @@
 
             selectedTime = time;
 
+            // 換時段 → 先前暫存的預約資料作廢
+            hidePaymentPanels();
+
             document
               .querySelectorAll('.time-button')
               .forEach(function (btn) {
@@ -1652,11 +1744,70 @@
   }
 
   /* ==================================================
+     訂金面板控制
+  ================================================== */
+
+  function money(n) {
+
+    return 'NT$' + Number(n).toLocaleString('en-US');
+
+  }
+
+  function hidePaymentPanels() {
+
+    document.getElementById('prepaidPanel').style.display = 'none';
+    document.getElementById('depositPanel').style.display = 'none';
+
+    pendingReservationData = null;
+
+  }
+
+  // 匯款訂金面板
+  function showDepositPanel() {
+
+    document
+      .querySelectorAll('.deposit-amount-text')
+      .forEach(function (el) {
+
+        el.innerText = money(depositAmount);
+
+      });
+
+    const panel = document.getElementById('depositPanel');
+
+    panel.style.display = 'block';
+
+    panel.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center'
+    });
+
+  }
+
+  // 預留訂金面板：顯示餘額與扣抵後剩餘，讓客人確認
+  function showPrepaidPanel(prepaid) {
+
+    document.getElementById('prepaidBalance').innerText = money(prepaid);
+    document.getElementById('prepaidNeed').innerText = money(depositAmount);
+    document.getElementById('prepaidAfter').innerText = money(prepaid - depositAmount);
+
+    const panel = document.getElementById('prepaidPanel');
+
+    panel.style.display = 'block';
+
+    panel.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center'
+    });
+
+  }
+
+  /* ==================================================
      步驟一：確認預約
      - 先檢查基本欄位
-     - 呼叫後端確認是否為會員
-     - 會員 -> 直接建立預約
-     - 非會員 -> 顯示新客訂金說明
+     - 呼叫後端查會員與預留訂金（帶 idToken 驗證身分）
+     - 預留訂金足夠 -> 跳出預留訂金確認面板
+     - 否則 -> 顯示匯款訂金面板
   ================================================== */
 
   async function submitReservation() {
@@ -1727,7 +1878,7 @@
 
     }
 
-    document.getElementById('depositPanel').style.display = 'none';
+    hidePaymentPanels();
 
     message.innerHTML = '';
 
@@ -1752,7 +1903,10 @@
 
       const memberResult = await callGAS(
         'checkMember',
-        { phone: phone }
+        {
+          phone: phone,
+          idToken: lineIdToken
+        }
       );
 
       if (!memberResult || !memberResult.success) {
@@ -1761,28 +1915,20 @@
 
       }
 
-      if (memberResult.isMember) {
+      const prepaid = Number(memberResult.prepaidDeposit) || 0;
 
-        // 舊會員，直接建立正式預約
-        await doCreateReservation(
-          reservationData,
-          false,
-          ''
-        );
+      depositAmount = Number(memberResult.depositAmount) || 500;
+      pendingReservationData = reservationData;
+
+      if (prepaid >= depositAmount) {
+
+        // 預留訂金足夠：先讓客人確認要不要使用
+        showPrepaidPanel(prepaid);
 
       } else {
 
-        // 新客，暫存資料並顯示訂金說明
-        pendingReservationData = reservationData;
-
-        const depositPanel = document.getElementById('depositPanel');
-
-        depositPanel.style.display = 'block';
-
-        depositPanel.scrollIntoView({
-          behavior: 'smooth',
-          block: 'center'
-        });
+        // 沒有或不足：一律匯款
+        showDepositPanel();
 
       }
 
@@ -1800,7 +1946,51 @@
   }
 
   /* ==================================================
-     步驟二（僅新客）：確認訂金並送出預約
+     步驟二 A：使用預留訂金並送出預約
+  ================================================== */
+
+  async function confirmUsePrepaid() {
+
+    if (!pendingReservationData) {
+
+      alert('請先填寫預約資訊並按下「確認預約」。');
+      return;
+
+    }
+
+    const button = document.getElementById('prepaidConfirmButton');
+
+    button.disabled = true;
+    button.innerText = '處理中...';
+
+    try {
+
+      await doCreateReservation(
+        pendingReservationData,
+        true,
+        ''
+      );
+
+    } finally {
+
+      button.disabled = false;
+      button.innerText = '使用預留訂金並完成預約';
+
+    }
+
+  }
+
+  // 客人選擇「不使用預留訂金」，改走匯款
+  function declinePrepaid() {
+
+    document.getElementById('prepaidPanel').style.display = 'none';
+
+    showDepositPanel();
+
+  }
+
+  /* ==================================================
+     步驟二 B：匯款訂金，填後五碼並送出預約
   ================================================== */
 
   async function confirmDepositAndSubmit() {
@@ -1833,7 +2023,7 @@
 
       await doCreateReservation(
         pendingReservationData,
-        true,
+        false,
         last5
       );
 
@@ -1848,9 +2038,11 @@
 
   /* ==================================================
      實際呼叫後端建立預約
+     usePrepaid = true  → 使用預留訂金（後端會再驗證身分與餘額）
+     usePrepaid = false → 匯款，需帶後五碼
   ================================================== */
 
-  async function doCreateReservation(data, isNewCustomer, depositLast5) {
+  async function doCreateReservation(data, usePrepaid, depositLast5) {
 
     try {
 
@@ -1858,8 +2050,8 @@
         {},
         data,
         {
-          isNewCustomer: isNewCustomer,
-          depositLast5: depositLast5
+          usePrepaid: usePrepaid === true,
+          depositLast5: usePrepaid ? '' : depositLast5
         }
       );
 
@@ -1928,6 +2120,25 @@
     const message = document.getElementById('message');
 
     const isPending = result.status === '待確認';
+    const usedPrepaid = result.usedPrepaid === true;
+
+    let depositRow = '';
+
+    if (usedPrepaid) {
+
+      depositRow =
+        successRow('訂金', '已使用預留訂金扣抵 ' + money(depositAmount)) +
+        successRow('預留訂金剩餘', money(result.prepaidRemaining || 0));
+
+    } else if (isPending) {
+
+      depositRow = successRow('訂金後五碼', result.depositLast5 || '');
+
+    }
+
+    const notice = isPending
+      ? '已收到您的訂金資訊，我們將盡快為您確認匯款，確認後將以 LINE 通知您正式預約成功。'
+      : '已使用預留訂金，預約確認通知已傳送至您的 LINE。';
 
     message.innerHTML =
 
@@ -1955,34 +2166,19 @@
 
           successRow('價格', '$' + (result.price || '')) +
 
-          (
-            isPending
-              ? successRow(
-                  '訂金後五碼',
-                  result.depositLast5 || ''
-                )
-              : ''
-          ) +
+          depositRow +
 
         '</div>' +
 
         '<div class="success-notice">' +
-
-          (
-            isPending
-              ? '已收到您的訂金資訊，我們將盡快為您確認匯款，確認後將以 LINE 通知您正式預約成功。'
-              : '預約確認通知已傳送至您的 LINE。'
-          ) +
-
+          notice +
         '</div>' +
 
       '</div>';
 
-    document.getElementById('depositPanel').style.display = 'none';
+    hidePaymentPanels();
 
     document.getElementById('depositLast5').value = '';
-
-    pendingReservationData = null;
 
     message.scrollIntoView({
       behavior: 'smooth',
