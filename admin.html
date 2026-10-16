@@ -1156,7 +1156,11 @@ function bkByDate() {
 const isPrepaidBk = b => String(b["訂金後五碼"]||"").trim()==="預留扣抵";
 const isRefundedBk = b => (String(b["系統備註"]||"")+String(b["備註"]||"")).includes("已退回預留訂金");
 const depositOf = () => Number(S.depositAmount) || 500;
-const phoneKey = p => String(p||"").replace(/\D/g,"").replace(/^0+/,"");
+const phoneKey = p => {
+  let d=String(p||"").replace(/\D/g,"").replace(/^0+/,"");
+  if (d.indexOf("886")===0 && d.length>=11) d=d.slice(3).replace(/^0+/,"");
+  return d;
+};
 
 function bkCard(b) {
   const st=b["狀態"], id=esc(b["預約編號"]);
@@ -1582,10 +1586,11 @@ $("sAdd").onclick=()=>{
 /* 會員資料：預留訂金與備註 */
 function renderMembers() {
   const q=$("mq").value.trim().toLowerCase();
-  const list=S.members.filter(m=>!q||(m["姓名"]+m["電話"]).toLowerCase().includes(q));
+  const qk=phoneKey(q);
+  const list=S.members.filter(m=>!q||(m["姓名"]+fixPhone(m["電話"])).toLowerCase().includes(q)||(qk&&phoneKey(m["電話"]).includes(qk)));
 
   $("mlist").innerHTML=list.length?list.map(m=>{
-    const n=S.bookings.filter(b=>b["電話"]===m["電話"]&&b["狀態"]!=="已取消").length;
+    const n=S.bookings.filter(b=>phoneKey(b["電話"])===phoneKey(m["電話"])&&b["狀態"]!=="已取消").length;
     const pp=prepaidOf(m);
 
     return `<div class="card">
