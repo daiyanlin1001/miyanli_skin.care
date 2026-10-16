@@ -483,6 +483,31 @@ button:disabled {
   border-color: var(--ink);
 }
 
+/* 時段刪除按鈕 */
+.chipw {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.chipx {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--mute, #7A6B64);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chipx:hover {
+  background: var(--line);
+  color: var(--ink);
+}
+
 /* 服務價格欄位 */
 .f3 {
   display: grid;
@@ -658,6 +683,8 @@ a {
   <div class="top">
     <div class="logo">miyanli_skin.care<small>預約系統管理</small></div>
     <div class="row">
+      <span class="mute" id="sync" style="font-size:12px"></span>
+      <button class="b g sm" id="rf">重新整理</button>
       <button class="b g sm" id="chg">修改密碼</button>
       <button class="b g sm" id="out">登出</button>
     </div>
@@ -808,6 +835,7 @@ try {
 
 let S = {hours:[],services:[],bookings:[],members:[]};
 let svc = [], dirty = new Map(), tab = "bookings", tt;
+let syncing = false, lastSync = 0;
 
 const TITLES = {
   bookings:["預約系統","所有預約都在這裡，可切換日、週、月檢視。"],
@@ -872,6 +900,59 @@ async function load() {
   S = await api("getAll");
   svc = S.services.map(s=>({...s}));
   renderAll();
+  lastSync = Date.now();
+  stamp();
+}
+
+/* ---------- 即時更新（不需重新登入） ---------- */
+
+const POLL_MS = 30000; // 每 30 秒自動同步一次
+
+function stamp() {
+  const d = new Date(), z = n => String(n).padStart(2,"0");
+  $("sync").textContent = `更新於 ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`;
+}
+
+// 使用者正在這個區塊裡輸入時，不要重繪，避免輸入被洗掉
+function typingIn(sel) {
+  const a = document.activeElement;
+  return !!a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && !!a.closest(sel);
+}
+
+async function refresh(manual) {
+  if (syncing || !session || $("app").hidden) return;
+  syncing = true;
+
+  try {
+    const j = await api("getAll");
+
+    // 先判斷各區塊有沒有未儲存的編輯，有的就保留、不覆蓋
+    const svcClean = svcNorm(svc) === svcNorm(S.services);
+    const typingSvc = typingIn("#p-services");
+    const typingMem = typingIn("#p-members");
+
+    S.bookings = j.bookings;
+    if (!dirty.size) S.hours = j.hours;
+    if (svcClean && !typingSvc) {
+      S.services = j.services;
+      svc = j.services.map(x=>({...x}));
+    }
+    if (!typingMem) S.members = j.members;
+
+    renderBookings();
+    renderHours();
+    if (svcClean && !typingSvc) renderServices();
+    if (!typingMem) renderMembers();
+    updBar();
+
+    lastSync = Date.now();
+    stamp();
+    if (manual) toast("已更新到最新資料");
+  } catch(e) {
+    if (manual) toast(e.message);
+  }
+
+  syncing = false;
 }
 
 /* ---------- 登入 / 修改密碼 ---------- */
@@ -1125,15 +1206,23 @@ $("bview").onclick=async e=>{
 };
 
 /* 營業時間 */
-const H={ms:mStart(today()),sel:new Set(),pick:new Set(),extra:new Set()};
+const H={ms:mStart(today()),sel:new Set(),pick:new Set(),extra:new Set(),gone:new Set()};
 
 function commonTimes() {
   const c={};
   S.hours.forEach(h=>{
     if (h.slots) h.slots.split(",").forEach(t=>c[t]=(c[t]||0)+1);
   });
-  const top=Object.keys(c).sort((a,b)=>c[b]-c[a]).slice(0,8);
-  return [...new Set([...top,...H.extra,...H.pick])].sort();
+  const top=Object.keys(c).sort((a,b)=>c[b]-c[a]).slice(0,8).filter(t=>!H.gone.has(t));
+
+  // 所選日期目前已有的時段一定要列出來，才能逐一刪除
+  const cur=[];
+  H.sel.forEach(ds=>{
+    const h=S.hours.find(x=>x.date===ds);
+    if (h&&h.slots) h.slots.split(",").forEach(t=>cur.push(t));
+  });
+
+  return [...new Set([...top,...cur,...H.extra,...H.pick])].sort();
 }
 
 function renderHours() {
@@ -1156,7 +1245,7 @@ function renderHours() {
   $("hgrid").innerHTML=`<div class="grid">${g}</div>`;
   $("hed").hidden=!H.sel.size;
   $("hcount").textContent=`已選 ${H.sel.size} 天，請選擇時段`;
-  $("hchips").innerHTML=commonTimes().map(x=>`<button class="chip ${H.pick.has(x)?"on":""}" data-t="${x}">${x}</button>`).join("");
+  $("hchips").innerHTML=commonTimes().map(x=>`<span class="chipw"><button class="chip ${H.pick.has(x)?"on":""}" data-t="${x}">${x}</button><button class="chipx" data-x="${x}" aria-label="刪除 ${x} 時段" title="刪除這個時段">×</button></span>`).join("");
 }
 
 $("hp").onclick=()=>{
@@ -1201,6 +1290,30 @@ $("hsel").onclick=e=>{
 };
 
 $("hchips").onclick=e=>{
+  const x=e.target.closest("button[data-x]");
+
+  if (x) {
+    const t=x.dataset.x;
+    if (!confirm(`刪除時段 ${t}？\n會從所選 ${H.sel.size} 天移除這個時段（已經有人預約的單不會被取消）。`)) return;
+
+    H.extra.delete(t);
+    H.pick.delete(t);
+    H.gone.add(t);
+
+    H.sel.forEach(ds=>{
+      const ex=S.hours.find(h=>h.date===ds);
+      if (!ex||!ex.slots) return;
+      const arr=ex.slots.split(",").filter(v=>v!==t);
+      ex.slots=arr.join(",");
+      dirty.set(ds,{date:ds,slots:ex.slots,note:null});
+    });
+
+    renderHours();
+    updBar();
+    toast(`已移除 ${t}，記得按下方儲存`);
+    return;
+  }
+
   const b=e.target.closest("button[data-t]");
   if (!b) return;
   const t=b.dataset.t;
@@ -1212,6 +1325,7 @@ $("hchips").onclick=e=>{
 $("hAdd").onclick=()=>{
   const v=$("hT").value;
   if (!v) return toast("請先選一個時間");
+  H.gone.delete(v);
   H.extra.add(v);
   H.pick.add(v);
   renderHours();
@@ -1437,6 +1551,21 @@ function renderAll() {
   renderMembers();
   updBar();
 }
+
+// 自動 / 手動同步：定時、切回分頁、視窗取得焦點、按「重新整理」
+$("rf").onclick = () => refresh(true);
+
+setInterval(() => {
+  if (!document.hidden) refresh();
+}, POLL_MS);
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && Date.now() - lastSync > 5000) refresh();
+});
+
+window.addEventListener("focus", () => {
+  if (Date.now() - lastSync > 5000) refresh();
+});
 </script>
 </body>
 </html>
