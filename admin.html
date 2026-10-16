@@ -483,6 +483,42 @@ button:disabled {
   border-color: var(--ink);
 }
 
+/* 取消預約確認視窗 */
+.cm {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(60, 48, 40, .45);
+}
+
+.cm[hidden] {
+  display: none;
+}
+
+.cmbox {
+  width: 100%;
+  max-width: 360px;
+  padding: 22px;
+  border-radius: 16px;
+  background: var(--card);
+  box-shadow: 0 12px 40px rgba(60, 48, 40, .25);
+}
+
+.cmbox p {
+  margin: 10px 0 16px;
+  line-height: 1.6;
+}
+
+.cmbtns {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 /* 時段刪除按鈕 */
 .chipw {
   display: inline-flex;
@@ -782,6 +818,14 @@ a {
 
   <div class="bar" id="bar" hidden>
     <button class="b" id="save"></button>
+  </div>
+</div>
+
+<div id="cm" class="cm" hidden>
+  <div class="cmbox" role="dialog" aria-modal="true" aria-labelledby="cmt">
+    <b id="cmt"></b>
+    <p id="cmi" class="mute"></p>
+    <div class="cmbtns" id="cmb"></div>
   </div>
 </div>
 
@@ -1092,6 +1136,11 @@ function bkByDate() {
   return m;
 }
 
+const isPrepaidBk = b => String(b["訂金後五碼"]||"").trim()==="預留扣抵";
+const isRefundedBk = b => String(b["備註"]||"").includes("已退回預留訂金");
+const depositOf = () => Number(S.depositAmount) || 500;
+const phoneKey = p => String(p||"").replace(/\D/g,"").replace(/^0+/,"");
+
 function bkCard(b) {
   const st=b["狀態"], id=esc(b["預約編號"]);
   return `<div class="bk ${st==="已取消"?"x":""}">
@@ -1100,9 +1149,9 @@ function bkCard(b) {
       <span class="tag t-${esc(st)}">${esc(st)}</span>
     </div>
     <div>${esc(b["姓名"])}・<a href="tel:${esc(fixPhone(b["電話"]))}">${esc(fixPhone(b["電話"]))}</a></div>
-    <div class="mute">$${esc(b["價格"])}${b["訂金後五碼"]?"　後五碼 "+esc(b["訂金後五碼"]):""}${b["備註"]?"　備註："+esc(b["備註"]):""}</div>
+    <div class="mute">$${esc(b["價格"])}${isPrepaidBk(b)?"　預留訂金扣抵":(b["訂金後五碼"]?"　後五碼 "+esc(b["訂金後五碼"]):"")}${b["備註"]?"　備註："+esc(b["備註"]):""}</div>
     <div class="row" style="margin-top:10px">
-      <button class="b sm" data-act="ok" data-id="${id}" ${st==="已預約"?"disabled":""}>確認</button>
+      <button class="b sm" data-act="ok" data-id="${id}" ${st==="已預約"||(st==="已取消"&&isRefundedBk(b))?"disabled":""}>確認</button>
       <button class="b sm d" data-act="no" data-id="${id}" ${st==="已取消"?"disabled":""}>取消</button>
     </div>
   </div>`;
@@ -1190,20 +1239,91 @@ $("bview").onclick=async e=>{
   const ok=b.dataset.act==="ok",id=b.dataset.id;
   const bk=S.bookings.find(x=>String(x["預約編號"])===id);
 
-  if (!ok && !confirm(`確定取消 ${bk["姓名"]} ${bk["日期"]} ${bk["時間"]} 的預約？`)) return;
+  let refund=false;
+
+  if (!ok) {
+    const choice=await askCancel(bk);
+    if (!choice) return;
+    refund=choice==="refund";
+  }
 
   b.disabled=true;
   try {
     const status=ok?"已預約":"已取消";
-    await api("setStatus",{id,status});
+    const r=await api("setStatus",{id,status,refund});
     bk["狀態"]=status;
+
+    if (r.refunded) {
+      bk["備註"]=(bk["備註"]?bk["備註"]+"；":"")+`已退回預留訂金 NT$${r.refunded}`;
+      const mem=S.members.find(x=>phoneKey(x["電話"])===phoneKey(bk["電話"]));
+      if (mem) mem["預留訂金"]=String(r.prepaidBalance);
+      renderMembers();
+    }
+
     renderBookings();
-    toast(ok?"已確認":"已取消");
+    toast(ok?"已確認":(r.refunded?`已取消，並退回預留訂金 NT$${r.refunded}`:"已取消"));
   } catch(err) {
     toast(err.message);
     b.disabled=false;
   }
 };
+
+/* 取消預約：顯示訂金狀況，並詢問是否退回預留訂金 */
+function askCancel(bk) {
+  const amt=depositOf();
+  const prepaid=isPrepaidBk(bk);
+  const last5=String(bk["訂金後五碼"]||"").trim();
+  const mem=S.members.find(x=>phoneKey(x["電話"])===phoneKey(bk["電話"]));
+
+  $("cmt").textContent=`取消 ${bk["姓名"]} ${bk["日期"]} ${bk["時間"]} 的預約？`;
+
+  let info, btns;
+
+  if (prepaid) {
+    info=`這筆預約使用「預留訂金」扣抵了 NT$${amt}。`
+      +(mem?`該會員目前的預留訂金是 NT$${prepaidOf(mem)}。`:"")
+      +`取消後要把 NT$${amt} 退回預留訂金嗎？`;
+    btns=[
+      {t:`取消預約，並退回 NT$${amt}`,v:"refund",c:"b"},
+      {t:"取消預約，不退回",v:"keep",c:"b d"},
+      {t:"返回",v:null,c:"b g"}
+    ];
+  } else if (/^\d{5}$/.test(last5)) {
+    info=`這筆是匯款訂金（後五碼 ${last5}）。系統不會自動退款，如已收到款項需要退還，請自行匯回給客人。`;
+    btns=[
+      {t:"確認取消預約",v:"keep",c:"b d"},
+      {t:"返回",v:null,c:"b g"}
+    ];
+  } else {
+    info="這筆預約沒有訂金紀錄。";
+    btns=[
+      {t:"確認取消預約",v:"keep",c:"b d"},
+      {t:"返回",v:null,c:"b g"}
+    ];
+  }
+
+  $("cmi").textContent=info;
+  $("cmb").innerHTML="";
+  $("cm").hidden=false;
+
+  return new Promise(resolve=>{
+    const done=v=>{
+      $("cm").hidden=true;
+      $("cmb").innerHTML="";
+      resolve(v);
+    };
+
+    btns.forEach(x=>{
+      const el=document.createElement("button");
+      el.className=x.c;
+      el.textContent=x.t;
+      el.onclick=()=>done(x.v);
+      $("cmb").appendChild(el);
+    });
+
+    $("cm").onclick=e=>{ if (e.target===$("cm")) done(null); };
+  });
+}
 
 /* 營業時間 */
 const H={ms:mStart(today()),sel:new Set(),pick:new Set(),extra:new Set(),gone:new Set()};
