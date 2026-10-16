@@ -519,6 +519,23 @@ button:disabled {
   gap: 8px;
 }
 
+/* 服務：需現場評估勾選 */
+.evalrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -4px 0 12px;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.evalrow input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
 /* 時段刪除按鈕 */
 .chipw {
   display: inline-flex;
@@ -1149,7 +1166,7 @@ function bkCard(b) {
       <span class="tag t-${esc(st)}">${esc(st)}</span>
     </div>
     <div>${esc(b["姓名"])}・<a href="tel:${esc(fixPhone(b["電話"]))}">${esc(fixPhone(b["電話"]))}</a></div>
-    <div class="mute">$${esc(b["價格"])}${isPrepaidBk(b)?"　預留訂金扣抵":(b["訂金後五碼"]?"　後五碼 "+esc(b["訂金後五碼"]):"")}${b["備註"]?"　備註："+esc(b["備註"]):""}</div>
+    <div class="mute">${Number(b["價格"])>0?"$"+esc(b["價格"]):"需現場評估"}${isPrepaidBk(b)?"　預留訂金扣抵":(b["訂金後五碼"]?"　後五碼 "+esc(b["訂金後五碼"]):"")}${b["備註"]?"　備註："+esc(b["備註"]):""}</div>
     ${b["系統備註"]?`<div class="mute" style="font-size:12px;margin-top:3px">系統：${esc(b["系統備註"])}</div>`:""}
     <div class="row" style="margin-top:10px">
       <button class="b sm" data-act="ok" data-id="${id}" ${st==="已預約"||(st==="已取消"&&isRefundedBk(b))?"disabled":""}>確認</button>
@@ -1483,11 +1500,13 @@ function renderServices() {
   const h=svc.map((s,i)=>{
     if ((SF==="on"&&s["狀態"]!=="啟用")||(SF==="off"&&s["狀態"]!=="停用")) return "";
 
-    const f=(k,l)=>`<label>${l}<input type="number" inputmode="numeric" data-i="${i}" data-k="${k}" value="${esc(s[k])}"></label>`;
+    const isEval=String(s["價格"]).trim()==="0";
+    const f=(k,l)=>`<label>${l}<input type="number" inputmode="numeric" data-i="${i}" data-k="${k}" value="${esc(s[k])}" ${k==="價格"&&isEval?'placeholder="需現場評估" disabled':""}></label>`;
 
     return `<div class="card">
       <input style="width:100%;font-weight:600" placeholder="服務名稱" data-i="${i}" data-k="服務名稱" value="${esc(s["服務名稱"])}">
       <div class="f3">${f("價格","價格")}${f("課程分鐘","課程分鐘")}${f("緩衝分鐘","緩衝分鐘")}</div>
+      <label class="evalrow"><input type="checkbox" data-eval="${i}" ${String(s["價格"]).trim()==="0"?"checked":""}> 需現場評估（不顯示固定價格）</label>
       <div class="row sp">
         <select data-i="${i}" data-k="狀態">
           <option ${s["狀態"]==="啟用"?"selected":""}>啟用</option>
@@ -1502,6 +1521,16 @@ function renderServices() {
 }
 
 $("slist").oninput=$("slist").onchange=e=>{
+  // 「需現場評估」勾選：價格存 0，取消勾選則清空讓你重新填價格
+  const ev=e.target.closest("input[data-eval]");
+
+  if (ev) {
+    svc[+ev.dataset.eval]["價格"]=ev.checked?"0":"";
+    renderServices();
+    updBar();
+    return;
+  }
+
   const el=e.target.closest("[data-i]");
   if (!el) return;
   svc[+el.dataset.i][el.dataset.k]=el.value;
