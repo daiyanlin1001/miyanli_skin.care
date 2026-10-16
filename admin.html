@@ -1137,7 +1137,7 @@ function bkByDate() {
 }
 
 const isPrepaidBk = b => String(b["訂金後五碼"]||"").trim()==="預留扣抵";
-const isRefundedBk = b => String(b["備註"]||"").includes("已退回預留訂金");
+const isRefundedBk = b => (String(b["系統備註"]||"")+String(b["備註"]||"")).includes("已退回預留訂金");
 const depositOf = () => Number(S.depositAmount) || 500;
 const phoneKey = p => String(p||"").replace(/\D/g,"").replace(/^0+/,"");
 
@@ -1150,6 +1150,7 @@ function bkCard(b) {
     </div>
     <div>${esc(b["姓名"])}・<a href="tel:${esc(fixPhone(b["電話"]))}">${esc(fixPhone(b["電話"]))}</a></div>
     <div class="mute">$${esc(b["價格"])}${isPrepaidBk(b)?"　預留訂金扣抵":(b["訂金後五碼"]?"　後五碼 "+esc(b["訂金後五碼"]):"")}${b["備註"]?"　備註："+esc(b["備註"]):""}</div>
+    ${b["系統備註"]?`<div class="mute" style="font-size:12px;margin-top:3px">系統：${esc(b["系統備註"])}</div>`:""}
     <div class="row" style="margin-top:10px">
       <button class="b sm" data-act="ok" data-id="${id}" ${st==="已預約"||(st==="已取消"&&isRefundedBk(b))?"disabled":""}>確認</button>
       <button class="b sm d" data-act="no" data-id="${id}" ${st==="已取消"?"disabled":""}>取消</button>
@@ -1254,9 +1255,12 @@ $("bview").onclick=async e=>{
     bk["狀態"]=status;
 
     if (r.refunded) {
-      bk["備註"]=(bk["備註"]?bk["備註"]+"；":"")+`已退回預留訂金 NT$${r.refunded}`;
+      bk["系統備註"]=(bk["系統備註"]?bk["系統備註"]+"；":"")+`已退回預留訂金 NT$${r.refunded}`;
       const mem=S.members.find(x=>phoneKey(x["電話"])===phoneKey(bk["電話"]));
-      if (mem) mem["預留訂金"]=String(r.prepaidBalance);
+      if (mem) {
+        mem["預留訂金"]=String(r.prepaidBalance);
+        mem["系統紀錄"]=(mem["系統紀錄"]?mem["系統紀錄"]+"\n":"")+`${today()} 取消預約 ${bk["預約編號"]} 退回預留訂金 ${r.refunded}`;
+      }
       renderMembers();
     }
 
@@ -1568,7 +1572,8 @@ function renderMembers() {
         <label class="mute" for="pp-${m._row}">預留訂金（NT$）</label>
         <input id="pp-${m._row}" type="number" inputmode="numeric" min="0" step="1" data-pp="${m._row}" value="${pp}">
       </div>
-      <textarea rows="2" data-r="${m._row}" placeholder="寫下備註，例如偏好、提醒事項…">${esc(m["備註"])}</textarea>
+      <textarea rows="2" data-r="${m._row}" placeholder="寫下你自己的備註，例如偏好、提醒事項…（系統自動紀錄會另外顯示在下方）">${esc(m["備註"])}</textarea>
+      ${m["系統紀錄"]?`<details style="margin-top:8px"><summary class="mute" style="cursor:pointer;font-size:12px">系統紀錄</summary><div class="mute" style="white-space:pre-wrap;font-size:12px;margin-top:4px">${esc(m["系統紀錄"])}</div></details>`:""}
     </div>`;
   }).join(""):'<p class="mute">沒有符合的會員。</p>';
 }
