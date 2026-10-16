@@ -813,12 +813,12 @@
      服務項目：從後端「服務項目」工作表載入
   ================================================== */
 
-  // 價格 0 代表現場評估報價
+  // 價格 0 代表需現場評估
   function formatPriceLabel(price) {
 
     return Number(price) > 0
       ? '$' + Number(price).toLocaleString('en-US')
-      : '現場評估報價';
+      : '需現場評估';
 
   }
 
@@ -1450,7 +1450,7 @@
           successRow('日期', result.date || '') +
           successRow('時間', formatTime(result.time)) +
           successRow('服務', result.service || '') +
-          successRow('價格', Number(result.price) > 0 ? '$' + result.price : '現場評估報價') +
+          successRow('價格', Number(result.price) > 0 ? '$' + result.price : '需現場評估') +
           depositRow +
         '</div>' +
 
