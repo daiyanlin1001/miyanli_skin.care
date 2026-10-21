@@ -668,6 +668,25 @@ a {
   display: inline;
 }
 
+/* 訂金注意事項 */
+.notice {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--warn);
+  border-left-width: 4px;
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.notice b {
+  display: block;
+  color: var(--warn);
+  font-size: 13px;
+}
+
 /* 訂金 */
 .dep {
   margin-top: 6px;
@@ -890,6 +909,10 @@ a {
   </div>
 
   <section id="p-bookings">
+    <div class="notice" role="note">
+      <b>訂金注意事項</b>
+      <span id="depNotice"></span>
+    </div>
     <div class="row sp">
       <div class="row" id="modes">
         <button class="pill s on" data-m="day">日</button>
@@ -1042,7 +1065,7 @@ a {
 
 <script>
 // 貼上「後台」GAS 專案的網頁應用程式網址（…/exec），不是預約端的網址
-const GAS_URL = "https://script.google.com/macros/s/AKfycbwYNLXJBfPqZE4PuSslVr_fV-N4b4ofWyOV_-ur1-ER2yEFKjzOy2kyt7MP0fnqBVLo/exec";
+const GAS_URL = "";
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({
@@ -1085,7 +1108,9 @@ function normPhone(raw) {
 }
 
 const isNum = v => /^[\d,.]+$/.test(String(v ?? "").trim()) && String(v).trim()!=="";
-const priceText = p => { const s=String(p ?? "").trim(); return !s ? "—" : isNum(s) ? "$"+s : s; };
+// 預約端規則：價格 0 = 需現場評估
+const isOnsite = p => { const s=String(p ?? "").trim(); return s==="需現場評估" || (isNum(s) && +s.replace(/,/g,"")===0); };
+const priceText = p => { const s=String(p ?? "").trim(); return !s ? "—" : isOnsite(s) ? "需現場評估" : isNum(s) ? "$"+s : s; };
 const money = v => parseInt(String(v ?? "").replace(/[^\d]/g,""),10) || 0;
 const mLabel = ms => `${ms.slice(0,4)} 年 ${+ms.slice(5,7)} 月`;
 
@@ -1096,14 +1121,14 @@ try {
   sessionStorage.removeItem("pw"); // 清掉舊版存的明文密碼
 } catch(e) {}
 
-let S = {hours:[],services:[],bookings:[],members:[],depositAmount:500,priceOnsite:"需現場評估"};
+let S = {hours:[],services:[],bookings:[],members:[],depositAmount:500,priceOnsite:"需現場評估",depositNotice:"訂金匯款後恕不退款，可折抵課程或產品。"};
 let svc = [], dirty = new Map(), tab = "bookings", tt;
 const rsvDraft = new Map();   // 會員預留訂金：輸入了但還沒按儲存
 
 const TITLES = {
   bookings:["預約系統","所有預約都在這裡，可切換日、週、月檢視。取消時決定訂金怎麼處理，完成後可以預留訂金給下次。"],
   hours:["營業時間","點選日期，挑好時段，一次套用到多天。改完記得按「儲存營業時間」。"],
-  services:["服務項目","調整服務的價格與時間；價格可以設為「需現場評估」。不再提供的服務可以停用或刪除。"],
+  services:["服務項目","調整服務的價格與時間；勾選「需現場評估」會存成價格 0。預約頁有 5 分鐘快取，改完最多 5 分鐘後客人才會看到。"],
   members:["會員資料","客人的聯絡方式、預留訂金，以及你自己的備註。"],
   settings:["系統設定","管理員專用：寫入通知用的金鑰（指令碼屬性）。"]
 };
@@ -1200,6 +1225,8 @@ async function load() {
   svc = S.services.map(s=>({...s}));
   lastSig = sig(S);
   lastIds = new Set(S.bookings.map(b=>String(b["預約編號"])));
+  S.depositNotice = S.depositNotice || "訂金匯款後恕不退款，可折抵課程或產品。";
+  $("depNotice").textContent = S.depositNotice;
   renderAll();
   stamp();
   applyRole();
@@ -1437,6 +1464,14 @@ const pkey = p => String(p||"").replace(/\D/g,"").replace(/^(886)(?=9\d{8}$)/,""
 const memberOf = p => S.members.find(m=>pkey(m["電話"])===pkey(p));
 const PAYS = ["刷卡","現金","轉帳"];
 
+/* 「通知客人」勾選框：勾了才發 LINE（Push API 會計入每月免費額度） */
+function notifyBox(bk, label="LINE 通知客人") {
+  return String(bk["LINE UID"]||"").trim()
+    ? `<label class="lbl" style="margin-top:12px"><input type="checkbox" id="ntf"> ${label}</label>`
+    : '<p class="mute" style="margin:12px 0 0">這筆預約沒有 LINE 帳號，無法通知。</p>';
+}
+const notifyChecked = () => { const c=$("dlgB").querySelector("#ntf"); return !!(c&&c.checked); };
+
 /* 對話框：取消預約（訂金處理）、課程完成（是否預留訂金） */
 let dlgDone = null;
 
@@ -1482,6 +1517,7 @@ function rsvBlock(b, id) {
       <label class="money"><span>$</span><input type="number" inputmode="numeric" min="0" step="1" data-rsvin="${id}" value="${esc(val)}"></label>
       <button class="b sm" data-act="rsv" data-id="${id}">儲存</button>
       <button class="b g sm" data-act="rsv0" data-id="${id}" ${done==="0"?"disabled":""}>不預留</button>
+      ${String(b["LINE UID"]||"").trim()?'<label class="lbl"><input type="checkbox" data-rsvntf> 通知客人</label>':""}
     </div>
   </div>`;
 }
@@ -1493,6 +1529,14 @@ function bkCard(b) {
         <option value="">未收款</option>
         ${PAYS.map(p=>`<option ${b["付款方式"]===p?"selected":""}>${p}</option>`).join("")}
       </select>`;
+  const isT=b["付款方式"]==="轉帳";
+  const last5=String(b["轉帳後五碼"]||"");
+  const t5=`<div class="row" data-t5="${id}" style="margin-top:8px" ${isT?"":"hidden"}>
+      <span class="mute">轉帳後五碼</span>
+      <input type="text" inputmode="numeric" maxlength="5" pattern="\\d{5}" data-t5in="${id}" value="${esc(last5)}" placeholder="00000" style="width:96px;padding:8px 10px" ${st==="已取消"?"disabled":""}>
+      <button class="b sm" data-act="t5" data-id="${id}" ${st==="已取消"?"disabled":""}>儲存</button>
+      ${isT&&last5?`<span class="mute">已記錄 ${esc(last5)}</span>`:'<span class="unsaved">還沒儲存</span>'}
+    </div>`;
 
   return `<div class="bk ${st==="已取消"?"x":""}">
     <div class="row sp">
@@ -1509,6 +1553,7 @@ function bkCard(b) {
       <button class="b sm d" data-act="no" data-id="${id}" ${st==="已取消"?"disabled":""}>取消</button>
       ${pay}
     </div>
+    ${t5}
     ${st==="已完成"?rsvBlock(b,id):""}
   </div>`;
 }
@@ -1596,10 +1641,17 @@ $("bview").onclick=async e=>{
   const bk=S.bookings.find(x=>String(x["預約編號"])===id);
   if (!bk) return;
 
+  if (act==="t5") {
+    const v=b.parentElement.querySelector("input[data-t5in]").value.replace(/\s/g,"");
+    if (!/^\d{5}$/.test(v)) return toast("請輸入轉帳帳號後五碼（5 位數字）");
+    return savePay(bk,"轉帳",v,b);
+  }
+
   if (act==="rsv"||act==="rsv0") {
     const inp=b.closest(".rsv").querySelector("input[data-rsvin]");
     const amount=act==="rsv0"?"0":inp.value.trim();
-    return saveReserve(bk,amount,b);
+    const ntf=b.closest(".rsv").querySelector("input[data-rsvntf]");
+    return saveReserve(bk,amount,b,!!(ntf&&ntf.checked));
   }
 
   const status={ok:"已預約",done:"已完成",no:"已取消"}[act];
@@ -1613,24 +1665,59 @@ $("bview").onclick=async e=>{
         title:"取消預約",
         body:`<p class="mute" style="margin:0 0 6px">${esc(who)}　${esc(bk["服務"])}</p>
           <p style="margin:0">這筆預約${+bk._usedReserve?`<b>有使用預留訂金 $${dep}</b>`:`有收訂金 <b>$${dep}</b>${bk["訂金後五碼"]?`（後五碼 ${esc(bk["訂金後五碼"])}）`:""}`}，訂金要怎麼處理？</p>
-          <label class="opt"><input type="radio" name="dact" value="轉預留訂金" checked><span>轉為預留訂金<small>加回會員的預留訂金，下次預約可直接使用</small></span></label>
-          <label class="opt"><input type="radio" name="dact" value="退還"><span>退還訂金<small>系統只做紀錄，請自行退款給客人</small></span></label>
-          <label class="opt"><input type="radio" name="dact" value="不退還"><span>不退還<small>例如當天臨時取消</small></span></label>
-          <p class="mute" style="margin:10px 0 0">取消後這個時段會開放給其他人預約。</p>`,
+          <p class="unsaved" style="margin:8px 0 0">${esc(S.depositNotice)}</p>
+          <label class="opt"><input type="radio" name="dact" value="轉預留訂金" checked><span>轉為預留訂金<small>加回會員的預留訂金，下次預約折抵課程</small></span></label>
+          <label class="opt"><input type="radio" name="dact" value="折抵產品"><span>折抵產品<small>客人用這筆訂金購買產品，系統只做紀錄</small></span></label>
+          <label class="opt"><input type="radio" name="dact" value="不退還"><span>不退還<small>例如當天臨時取消、未到</small></span></label>
+          <p class="mute" style="margin:10px 0 0">取消後這個時段會開放給其他人預約。</p>
+          ${notifyBox(bk,"LINE 通知客人預約已取消")}`,
         ok:"確定取消",
         no:"不取消"
       });
       if (!okd) return;
       data.depositAction=$("dlgB").querySelector('input[name="dact"]:checked').value;
-    } else if (!confirm(`確定取消 ${who} 的預約？\n這筆沒有訂金紀錄。取消後這個時段會開放給其他人預約。`)) return;
+    } else {
+      const okd=await openDlg({
+        title:"取消預約",
+        body:`<p style="margin:0">確定取消 ${esc(who)} 的預約？</p>
+          <p class="mute" style="margin:6px 0 0">這筆沒有訂金紀錄。取消後這個時段會開放給其他人預約。</p>
+          ${notifyBox(bk,"LINE 通知客人預約已取消")}`,
+        ok:"確定取消",
+        no:"不取消"
+      });
+      if (!okd) return;
+    }
+    data.notify=notifyChecked();
   }
 
-  if (act==="ok" && bk["狀態"]==="已取消") {
+  if (act==="ok") {
+    const restore=bk["狀態"]==="已取消";
     const pa=String(bk["訂金處理"]||"");
-    if (!confirm(`恢復 ${who} 的預約？${pa==="轉預留訂金"?`\n當初轉入的預留訂金 $${bk._deposit} 會從會員扣回。`:pa?`\n當初訂金選擇「${pa}」，請自行確認款項。`:""}\n請先確認這個時段沒有被別人預約。`)) return;
+    const okd=await openDlg({
+      title:restore?"恢復預約":"確認預約",
+      body:`<p style="margin:0">${restore?"恢復":"確認"} ${esc(who)}　${esc(bk["服務"])}？</p>
+        ${restore?`<p class="mute" style="margin:6px 0 0">${pa==="轉預留訂金"?`當初轉入的預留訂金 $${bk._deposit} 會從會員扣回。`:pa?`當初訂金選擇「${esc(pa)}」，請自行確認款項。`:""}請先確認這個時段沒有被別人預約。</p>`
+          :`<div class="dep" style="margin-top:6px">${depText(bk)}</div>`}
+        ${notifyBox(bk,"LINE 通知客人「預約已確認」")}`,
+      ok:restore?"恢復預約":"確認預約",
+      no:"返回"
+    });
+    if (!okd) return;
+    data.notify=notifyChecked();
   }
 
-  if (act==="done" && !confirm(`標記 ${who} 已完成？\n會 LINE 通知客人本次服務完成，接著可以選擇是否預留訂金。`)) return;
+  if (act==="done") {
+    const okd=await openDlg({
+      title:"服務完成",
+      body:`<p style="margin:0">標記 ${esc(who)}　${esc(bk["服務"])} 已完成？</p>
+        <p class="mute" style="margin:6px 0 0">接著可以選擇是否預留訂金。</p>
+        ${notifyBox(bk,"LINE 通知客人「本次服務已完成」")}`,
+      ok:"標記完成",
+      no:"返回"
+    });
+    if (!okd) return;
+    data.notify=notifyChecked();
+  }
 
   b.disabled=true;
   try {
@@ -1663,22 +1750,23 @@ async function askReserve(id) {
       <div class="row" style="margin:8px 0 0 40px"><label class="money"><span>$</span><input id="rkAmt" type="number" inputmode="numeric" min="0" step="1" value="${S.depositAmount}"></label></div>
       <label class="opt"><input type="radio" name="rk" value="n"><span>不預留</span></label>
       ${mem?"":'<p class="unsaved" style="margin:10px 0 0">找不到這位客人的會員資料，請先到「會員資料」新增，才能預留訂金。</p>'}
-      <p class="mute" style="margin:10px 0 0">之後也可以在這筆預約下方修改。</p>`,
+      <p class="mute" style="margin:10px 0 0">${esc(S.depositNotice)}之後也可以在這筆預約下方修改。</p>
+      ${notifyBox(bk,"LINE 通知客人「已為你保留訂金」")}`,
     ok:"儲存",
     no:"稍後再說"
   });
   if (!ok) return;
 
   const yes=$("dlgB").querySelector('input[name="rk"]:checked').value==="y";
-  await saveReserve(bk, yes?$("rkAmt").value.trim():"0");
+  await saveReserve(bk, yes?$("rkAmt").value.trim():"0", null, notifyChecked());
 }
 
-async function saveReserve(bk, amount, btn) {
+async function saveReserve(bk, amount, btn, notify=false) {
   if (!/^\d+$/.test(amount)) return toast("預留訂金請輸入 0 以上的整數");
   if (btn) btn.disabled=true;
 
   try {
-    const r=await api("saveReserve",{id:bk["預約編號"],amount});
+    const r=await api("saveReserve",{id:bk["預約編號"],amount,notify});
     await load();
     let msg=r.unchanged?"金額沒有變更":(+amount>0?`已預留 $${amount}・會員預留訂金 $${r.reserve}`:`已設為不預留・會員預留訂金 $${r.reserve}`);
     if (r.notified===false) msg+=`（LINE 通知未送出：${r.notifyError}）`;
@@ -1689,21 +1777,39 @@ async function saveReserve(bk, amount, btn) {
   }
 }
 
-$("bview").onchange=async e=>{
-  const s=e.target.closest("select[data-pay]");
-  if (!s) return;
+// 收款方式：刷卡／現金／未收款選了就存；轉帳要先填後五碼、按儲存才存
+$("bview").onchange=e=>{
+  const sel=e.target.closest("select[data-pay]");
+  if (!sel) return;
 
-  const bk=S.bookings.find(x=>String(x["預約編號"])===s.dataset.pay);
+  const id=sel.dataset.pay;
+  const bk=S.bookings.find(x=>String(x["預約編號"])===id);
+  const box=$("bview").querySelector(`[data-t5="${CSS.escape(id)}"]`);
 
+  if (sel.value==="轉帳") {
+    box.hidden=false;
+    box.querySelector("input").focus();
+    return;
+  }
+
+  box.hidden=true;
+  savePay(bk,sel.value,"",null,sel);
+};
+
+async function savePay(bk,method,last5,btn,sel) {
+  if (btn) btn.disabled=true;
   try {
-    await api("setPayment",{id:s.dataset.pay,method:s.value});
-    bk["付款方式"]=s.value;
-    toast(s.value?`已記錄收款：${s.value}`:"已改為未收款");
+    await api("setPayment",{id:bk["預約編號"],method,last5});
+    bk["付款方式"]=method;
+    bk["轉帳後五碼"]=method==="轉帳"?last5:"";
+    renderBookings();
+    toast(method==="轉帳"?`已記錄收款：轉帳（後五碼 ${last5}）`:method?`已記錄收款：${method}`:"已改為未收款");
   } catch(err) {
     toast(err.message);
-    s.value=bk["付款方式"]||"";
+    if (btn) btn.disabled=false;
+    if (sel) sel.value=bk["付款方式"]||"";
   }
-};
+}
 
 /* 營業時間 */
 const H={ms:mStart(today()),sel:new Set(),pick:new Set(),extra:new Set()};
@@ -1908,7 +2014,7 @@ function renderServices() {
     if ((SF==="on"&&s["狀態"]!=="啟用")||(SF==="off"&&s["狀態"]!=="停用")) return "";
 
     const f=(k,l)=>`<label>${l}<input type="number" inputmode="numeric" data-i="${i}" data-k="${k}" value="${esc(s[k])}"></label>`;
-    const onsite=String(s["價格"]).trim()===S.priceOnsite;
+    const onsite=isOnsite(s["價格"]);
     const price=onsite
       ? `<label>價格<input value="${esc(S.priceOnsite)}" disabled></label>`
       : f("價格","價格");
@@ -1935,7 +2041,7 @@ $("slist").oninput=$("slist").onchange=e=>{
   if (ck) {
     if (e.type!=="change") return;
     const s=svc[+ck.dataset.onsite];
-    s["價格"]=ck.checked?S.priceOnsite:"";
+    s["價格"]=ck.checked?"0":"";   // 預約端：價格 0 = 需現場評估
     renderServices();
     updBar();
     return;
@@ -2024,6 +2130,7 @@ function renderMembers() {
         </div>
       </div>
       ${changed?'<div class="unsaved" style="text-align:right;margin-top:4px">還沒儲存</div>':""}
+      ${m["系統紀錄"]?`<div class="sysnote" style="white-space:pre-line;margin-top:8px">${esc(String(m["系統紀錄"]).trim().split("\n").slice(-3).join("\n"))}</div>`:""}
       <textarea rows="2" data-r="${m._row}" placeholder="寫下備註，例如膚況、偏好、提醒事項…">${esc(m["備註"])}</textarea>
     </div>`;
   }).join(""):'<p class="mute">沒有符合的會員。</p>';
