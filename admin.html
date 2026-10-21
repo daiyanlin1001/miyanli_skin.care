@@ -1222,7 +1222,7 @@ async function load() {
   lastSig = sig(S);
   lastIds = new Set(S.bookings.map(b=>String(b["預約編號"])));
   S.depositNotice = S.depositNotice || "訂金匯款後恕不退款，可折抵課程或產品。";
-  $("depNotice").textContent = S.depositNotice;
+  //$("depNotice").textContent = S.depositNotice;
   renderAll();
   stamp();
   applyRole();
