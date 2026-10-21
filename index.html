@@ -172,6 +172,18 @@
   }
   .deposit-account strong { color: var(--tea-primary); font-size: 16px; letter-spacing: 1px; }
 
+  /* 訂金注意事項（文字統一由 DEPOSIT_NOTICE 填入） */
+  .deposit-notice {
+    margin: 0 0 14px; padding: 10px 12px 10px 14px; border-radius: 10px;
+    background: var(--tea-white); border: 1px solid var(--tea-border); border-left: 4px solid var(--tea-danger);
+    color: var(--tea-text); font-size: 13px; line-height: 1.8;
+  }
+  .deposit-notice strong { display: block; color: var(--tea-danger); font-size: 13px; font-weight: 800; }
+  .section-description + .deposit-notice { margin: -8px 0 22px; }
+
+  .field-error { margin-top: 6px; color: var(--tea-danger); font-size: 13px; }
+  .member-hint { margin: 0 0 14px; color: var(--tea-muted); font-size: 13px; line-height: 1.8; }
+
   /* MESSAGE */
   .message { margin-top: 18px; color: var(--tea-primary); line-height: 1.8; font-size: 14px; }
   .success { padding: 20px 18px; margin-top: 0; border-radius: 13px; background: var(--tea-bg); border: 1px solid var(--tea-border); box-shadow: 0 4px 14px var(--tea-shadow); }
@@ -285,7 +297,8 @@
 
     <div class="form-group">
       <label for="phone">電話</label>
-      <input type="tel" id="phone" placeholder="請輸入聯絡電話" autocomplete="tel" inputmode="tel">
+      <input type="tel" id="phone" placeholder="09 開頭的 10 碼手機號碼" autocomplete="tel" inputmode="tel" maxlength="16">
+      <div id="phoneError" class="field-error" style="display:none;">請輸入 09 開頭的 10 碼手機號碼</div>
     </div>
 
     <button id="submitButton" class="submit" type="button">確認預約</button>
@@ -302,6 +315,11 @@
         ・使用預留訂金後，此預約將直接成立。
       </div>
 
+      <div class="deposit-notice" role="note">
+        <strong>訂金注意事項</strong>
+        <span class="deposit-notice-text"></span>
+      </div>
+
       <button id="prepaidConfirmButton" class="submit" type="button">使用預留訂金並完成預約</button>
       <button id="prepaidDeclineButton" class="submit-secondary" type="button">改用匯款支付訂金</button>
 
@@ -312,10 +330,17 @@
 
       <div class="deposit-title">預約訂金說明</div>
 
+      <div id="memberHint" class="member-hint" style="display:none;"></div>
+
       <div class="deposit-rules">
         ・每次預約需先支付訂金 <strong class="deposit-amount-text">NT$500</strong>，並於課程當天折抵課程費用。<br>
         ・請匯款至下方帳號，並填寫匯款帳號後五碼，我們確認匯款後即完成正式預約。<br>
         ・匯款確認前，此預約狀態將顯示為「待確認」。
+      </div>
+
+      <div class="deposit-notice" role="note">
+        <strong>訂金注意事項</strong>
+        <span class="deposit-notice-text"></span>
       </div>
 
       <div class="deposit-account">
@@ -349,6 +374,16 @@
      設定值放在 config.js：CONFIG.LIFF_ID / CONFIG.GAS_ENDPOINT
   ================================================== */
 
+  // 訂金注意事項：頁面上所有 .deposit-notice-text 都從這裡填入
+  // （要改文字只改這一行；和後台 BackCode.gs 的 DEPOSIT_NOTICE 保持一致）
+  const DEPOSIT_NOTICE = '訂金匯款後恕不退款，可折抵課程或產品。';
+
+  document.querySelectorAll('.deposit-notice-text').forEach(function (el) {
+
+    el.textContent = DEPOSIT_NOTICE;
+
+  });
+
   let selectedTime = '';
   let selectedDate = '';
   let calendarViewDate = new Date();
@@ -375,6 +410,42 @@
 
   // 服務項目（由 loadServices 從後端「服務項目」工作表載入）
   let servicesMap = {};
+
+  // 電話統一格式：只接受台灣手機 09 開頭 10 碼（和後端 isValidMobile_ 相同規則）
+  // 0912-345-678、0912 345 678、+886 912 345 678 → 0912345678；不合格回傳空字串
+  function normalizeMobile(raw) {
+
+    let p = String(raw || '').replace(/[\s\-()（）]/g, '');
+
+    if (p.indexOf('+886') === 0) p = '0' + p.slice(4);
+    else if (/^886\d{9}$/.test(p)) p = '0' + p.slice(3);
+    else if (/^9\d{8}$/.test(p)) p = '0' + p;
+
+    return /^09\d{8}$/.test(p) ? p : '';
+
+  }
+
+  // 離開電話欄時自動整理格式，格式不對就提示
+  document.getElementById('phone').addEventListener('blur', function () {
+
+    const input = document.getElementById('phone');
+    const value = input.value.trim();
+
+    if (!value) return;
+
+    const p = normalizeMobile(value);
+
+    document.getElementById('phoneError').style.display = p ? 'none' : 'block';
+
+    if (p) input.value = p;
+
+  });
+
+  document.getElementById('phone').addEventListener('input', function () {
+
+    document.getElementById('phoneError').style.display = 'none';
+
+  });
 
   // 目前選的服務名稱（月曆與時段查詢都要帶給後端）
   function getSelectedService() {
@@ -1142,7 +1213,7 @@
 
     const date = selectedDate;
     const name = document.getElementById('name').value.trim();
-    const phone = document.getElementById('phone').value.trim();
+    const phone = normalizeMobile(document.getElementById('phone').value);
     const service = getSelectedService();
 
     const button = document.getElementById('submitButton');
@@ -1185,10 +1256,14 @@
 
     if (!phone) {
 
-      alert('請輸入電話');
+      document.getElementById('phoneError').style.display = 'block';
+      document.getElementById('phone').focus();
+      alert('請輸入 09 開頭的 10 碼手機號碼');
       return;
 
     }
+
+    document.getElementById('phone').value = phone;
 
     hidePaymentPanels();
 
@@ -1217,15 +1292,26 @@
         'checkMember',
         {
           phone: phone,
+          name: name,           // 舊會員第一次用 LINE 預約時，後端用電話＋姓名綁定 LINE
           idToken: lineIdToken
         }
       );
 
       if (!memberResult || !memberResult.success) {
 
-        throw new Error('會員資料確認失敗，請稍後再試。');
+        throw new Error(
+          memberResult && memberResult.message
+            ? memberResult.message
+            : '會員資料確認失敗，請稍後再試。'
+        );
 
       }
+
+      // 有會員資料但預留訂金無法使用時的提醒（顯示在匯款面板上方）
+      const hint = document.getElementById('memberHint');
+
+      hint.textContent = memberResult.notice || '';
+      hint.style.display = memberResult.notice ? 'block' : 'none';
 
       const prepaid = Number(memberResult.prepaidDeposit) || 0;
 
@@ -1454,7 +1540,9 @@
           depositRow +
         '</div>' +
 
-        '<div class="success-notice">' + notice + '</div>' +
+        '<div class="success-notice">' +
+          escapeHtml(notice) + '<br>' + escapeHtml(DEPOSIT_NOTICE) +
+        '</div>' +
 
       '</div>';
 
